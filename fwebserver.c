@@ -17,18 +17,19 @@
 #include "hash.h"
 #define MAX_EPOLLSIZE 100000
 
-// process event
-// argument: new_fd is client socket file description
-// return:
-//	-1 means format error
-//	-2 means socket io error
-//	0 means process sucessful, and close connection
-//	1 means process sucessful, and keep alive
+/*
+ * process event
+ * argument: new_fd is client socket file description
+ * return:
+ * -1 means format error
+ * -2 means socket io error
+ *  0 means process sucessful, and close connection
+ *  1 means process sucessful, and keep alive
+ */
 int process(int new_fd)
 {
 	char buf[MAX_BUF_SIZE];
 	int nbytes = 0;
-	int i;
 	request_t request;
 	response_t response;
 	int ret = 1;
@@ -37,17 +38,9 @@ int process(int new_fd)
 
 	do {
 		if ((nbytes = read(new_fd, buf, MAX_BUF_SIZE)) == -1) {
-//			printf("Read Error:%s\n", strerror(errno));
 			ret = -2;
 			break;
 		}
-
-//		puts("*****http request string*****");
-//		for (i = 0; i < nbytes; ++i) {
-//			putchar(buf[i]);
-//		}
-//		puts("*****************************");
-
 
 		if (read_http_request(&request, buf, nbytes) == -1) {
 			ret = -1;
@@ -67,21 +60,13 @@ int process(int new_fd)
 		nbytes = http_response_400(buf);
 	}
 
-//	puts("*****http response string****");
-//	printf("%s\n", buf);
-//	puts("*****************************");
-
-	if (ret != -2 && write(new_fd, buf, nbytes) == -1) {
-//		printf("Write Error:%s\n", strerror(errno));
+	if (ret != -2 && write(new_fd, buf, nbytes) == -1)
 		ret = -2;
-	}
-
-//	puts("-----------------------------------------\n");
 
 	return ret;
 }
 
-// print help information, if get wrong arguments
+/* print help information, if get wrong arguments */
 void print_help(char *program_name)
 {
 	printf("Usage:    %s [-h ip] [-p port]\n", program_name);
@@ -119,15 +104,17 @@ int is_valid_ip(char *ip)
 	return cnt == 4;
 }
 
-// read arguments
-// arguments:
-//	argc: number of arguments
-//	argv: string array of arguments
-//	ip: listening ip
-//	port: listening port number
-// return:
-//	1 means sucessful
-//	other means have error
+/*
+ * read arguments
+ * arguments:
+ * argc: number of arguments
+ * argv: string array of arguments
+ * ip: listening ip
+ * port: listening port number
+ * return:
+ * 	1 means sucessful
+ * 	other means have error
+ */
 int read_args(int argc, char **argv, char *ip, int *port)
 {
 	int i = 1;
@@ -243,11 +230,11 @@ int read_args(int argc, char **argv, char *ip, int *port)
 }
 
 struct event_info {
-	time_t last_active;	// last active time
-	int status;	// event_info status. 1 means this event_info is effective. 0 means empty.
-	int fd;		// socket file description
-} ei[MAX_EPOLLSIZE];	// more event information
-int eip;	// event_info array position, use it to find an empty event_info.
+	time_t last_active;	/* last active time */
+	int status;	/* event_info status. 1 means this event_info is effective. 0 means empty. */
+	int fd;		/* socket file description */
+} ei[MAX_EPOLLSIZE];	/* more event information */
+int eip;	/* event_info array position, use it to find an empty event_info. */
 
 struct hash_node event_table[HASH_SIZE];
 #define CHECK_TIMEOUT_NUM 10000	// every second check some events if it is timeout or not.
@@ -290,8 +277,6 @@ void del_event(int fd) {
 
 int main(int argc, char **argv)
 {
-//	puts("-----------------------------------------");
-//	printf("starting...\n");
 	int listen_fd, new_fd, epfd, nfds, n, ret, curfds;
 	socklen_t sock_len;
 	struct sockaddr_in service_addr, client_addr;
@@ -320,10 +305,6 @@ int main(int argc, char **argv)
 		perror("setrlimit");
 		exit(1);
 	}
-//	else
-//	{
-//		printf("set arguments sucessful...\n");
-//	}
 
 	// create socket
 	if ((listen_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
@@ -331,10 +312,6 @@ int main(int argc, char **argv)
 		perror("socket");
 		exit(1);
 	}
-//	else
-//	{
-//		printf("socket created sucessful...\n");
-//	}
 
 	fcntl(listen_fd, F_SETFL, fcntl(listen_fd, F_GETFD, 0)|O_NONBLOCK);
 
@@ -346,27 +323,17 @@ int main(int argc, char **argv)
 	int tmp = 1;
 	setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &tmp, sizeof(tmp));
 
-	// bind
 	if (bind(listen_fd, (struct sockaddr *) &service_addr, sizeof(struct sockaddr)) == -1)
 	{
 		perror("bind");
 		exit(1);
 	}
-//	else
-//	{
-//		printf("bind sucessful...\n");
-//	}
 
-	// listen
 	if (listen(listen_fd, backlog) == -1)
 	{
 		perror("listen");
 		exit(1);
 	}
-//	else
-//	{
-//		printf("started sucessful...\n");
-//	}
 
 	epfd = epoll_create(MAX_EPOLLSIZE);
 	sock_len = sizeof(struct sockaddr_in);
@@ -377,11 +344,6 @@ int main(int argc, char **argv)
 		fprintf(stderr, "epoll set insertion error: fd=%d\n", listen_fd);
 		return -1;
 	}
-//	else
-//	{
-//		printf("listener socket add to epoll sucessful...\n");
-//	}
-//	puts("-----------------------------------------");
 
 	curfds = 1;
 	check_pos = 0;
@@ -402,7 +364,6 @@ int main(int argc, char **argv)
 				del_event(ei[check_pos].fd);
 				close(ei[check_pos].fd);
 				epoll_ctl(epfd, EPOLL_CTL_DEL, ei[check_pos].fd,&ev);
-//				printf("[fd:%d] timeout %d\n", ei[check_pos].fd, duration);
 			}
 		}
 		nfds = epoll_wait(epfd, events, curfds, 1);
@@ -423,8 +384,6 @@ int main(int argc, char **argv)
 				}
 				else
 				{
-//					printf("there is a connect from %s:%d. allocate socket: %d.\n",
-//						inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port), new_fd);
 					add_event(new_fd);
 				}
 				fcntl(new_fd, F_SETFL, fcntl(new_fd, F_GETFD, 0)|O_NONBLOCK);

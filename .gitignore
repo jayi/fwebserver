@@ -1,4 +1,8 @@
 tags
+client
+server
+
 *.o
 *.out
 *.exe
+
