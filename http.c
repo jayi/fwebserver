@@ -30,7 +30,7 @@ char week[WEEK_NUM][ABBR_LENGTH] = {
 	"Tue",
 	"Wed",
 	"Thu",
-	"Fri", 
+	"Fri",
 	"Sat"
 };
 
@@ -51,11 +51,11 @@ char month[MONTH_NUM][ABBR_LENGTH] = {
 
 int is_valid_uri(char *uri)
 {
-	return strlen(uri) >= 1 && 
+	return strlen(uri) >= 1 &&
 		uri[0] == '/';
 }
 
-int read_head(request_t *request, char *line) 
+int read_head(request_t *request, char *line)
 {
 	char *iter = line;
 	char *part;
@@ -83,7 +83,7 @@ int read_head(request_t *request, char *line)
 	// read uri
 	if ((part = strsep(&iter, " ")) == NULL) {
 		return -1;
-	}	
+	}
 	request->uri = (char *)malloc((strlen(part) + 1) * sizeof(char));
 	strcpy(request->uri, part);
 	if (!is_valid_uri(request->uri)) {
@@ -102,13 +102,13 @@ int read_head(request_t *request, char *line)
 	else if (strcmp(part, "HTTP/1.1\r") == 0) {
 		request->http_version = HTTP_VERSION_1_1;
 		request->keep_alive = 1;
-	} 
+	}
 	else {
 		puts("Error: have no http version");
 		return -1;
 	}
 
-	if (part = strsep(&iter, " ")) {
+	if ((part = strsep(&iter, " ")) != NULL) {
 		return -1;
 	}
 	return 1;
@@ -135,39 +135,33 @@ int is_valid_status(int status)
 		if (status == valid_status[i]) {
 			return 1;
 		}
-	} 
+	}
 	return 0;
 }
 
 struct hash_node hash_table[HASH_SIZE];
-int read_http_request(request_t *request, char *str, int len) 
+int read_http_request(request_t *request, char *str, int len)
 {
 	char *iter = str;
 	char *line;
 	char *pch;
-	char *header;
-	char *value;
 	char *part;
 	char *pe;
 	int i;
 	int location_len;
 	header_t node;
 
-//	puts("init_request");
 	init_request(request);
 
 	if ((line = strsep(&iter, "\n")) == NULL) {
 		return -1;
 	}
 
-//	puts("read_head");
 	if (read_head(request, line) == -1) {
-//		printf("Error: read head error\n");
 		return -1;
 	}
 
-	while (line = strsep(&iter, "\n")) {
-//		printf("**line %s %d\n", line, strlen(line));
+	while ((line = strsep(&iter, "\n")) != NULL) {
 		if (strcmp(line, "\r") == 0) {
 			break;
 		}
@@ -178,17 +172,15 @@ int read_http_request(request_t *request, char *str, int len)
 		if ((pch = strchr(line, ':')) == NULL) {
 			return -1;
 		}
-//		puts("valid line");
 		if (strncmp(line, "Expect-Status", strlen("Expect-Status")) == 0) {
 			if (request->flag & EXPECT_STATUS_FLAG) {
-//				printf("Error: more than one Expect-Status\n");
 				return -1;
 			}
 			request->flag |= EXPECT_STATUS_FLAG;
 
 			request->expect_status = 0;
 			for (i = pch - line + 2; isdigit(line[i]); ++i) {
-				request->expect_status = 
+				request->expect_status =
 					request->expect_status * 10 + line[i] - '0';
 			}
 			if (!is_valid_status(request->expect_status)) {
@@ -202,7 +194,6 @@ int read_http_request(request_t *request, char *str, int len)
 					"Expect-Location",
 					strlen("Expect-Location")) == 0) {
 			if (request->flag & EXPECT_LOCATION_FLAG) {
-//				printf("Error: more than one Expect-Location\n");
 				return -1;
 			}
 			request->flag |= EXPECT_LOCATION_FLAG;
@@ -211,11 +202,9 @@ int read_http_request(request_t *request, char *str, int len)
 			request->expect_location = (char *)malloc(location_len + 1);
 			strncpy(request->expect_location, pch + 2, location_len);
 			request->expect_location[location_len] = '\0';
-//			printf("|%s %zd\n", request->expect_location, strlen(request->expect_location));
 		}
 		else if (strncmp(line, "Expect-Header", strlen("Expect-Header")) == 0) {
 			if (request->flag & EXPECT_HEADER_FLAG) {
-//				printf("Error: more than one Expect-Header\n");
 				return -1;
 			}
 			request->flag |= EXPECT_HEADER_FLAG;
@@ -235,13 +224,12 @@ int read_http_request(request_t *request, char *str, int len)
 
 				elem_t hash_num = elf_hash(node->header);
 				if (hash_get(hash_num, hash_table) != -1) {
-//					printf("Error: there are same headers in Expect-Header\n");
 					return -1;
-				} 
+				}
 				else {
 					hash_insert(hash_num, 0, hash_table);
 				}
-				node->value = (char *)malloc(sizeof(char) 
+				node->value = (char *)malloc(sizeof(char)
 						* (strlen(part) - (pe - part) + 1));
 				strncpy(node->value, pe + 1, strlen(part) - (pe - part) - 1);
 				node->value[strlen(part) - (pe - part)] = '\0';
@@ -265,7 +253,7 @@ int read_http_request(request_t *request, char *str, int len)
 
 			request->expect_length = 0;
 			for (i = pch - line + 2; isdigit(line[i]); ++i) {
-				request->expect_length = 
+				request->expect_length =
 					request->expect_length * 10 + line[i] - '0';
 			}
 			if (line[i] != '\r') {
@@ -287,12 +275,12 @@ int read_http_request(request_t *request, char *str, int len)
 					"close\r",
 					strlen("close\r")) == 0) {
 				request->keep_alive = 0;
-			} 
+			}
 			else if (strncmp(pch,
 					"keep-alive\r",
 					strlen("keep-alive\r")) == 0) {
 				request->keep_alive = 1;
-			} 
+			}
 			else {
 				return -1;
 			}
@@ -306,7 +294,7 @@ int read_http_request(request_t *request, char *str, int len)
 			node->header[pch - line + 1] = '\0';
 //			printf("header	%s ", node->header);
 //			printf("%zd\n", strlen(node->header));
-			node->value = (char *)malloc(sizeof(char) 
+			node->value = (char *)malloc(sizeof(char)
 					* (strlen(line) - (pch - line) - 1));
 			strncpy(node->value, pch + 2, strlen(line) - (pch - line) - 3);
 			node->value[strlen(line) - (pch - line) - 1] = '\0';
@@ -340,7 +328,7 @@ void init_response(response_t *response)
 	get_time_in_http_format(response->time_str, response->t);
 }
 
-void deep_copy(char **dest, char *src, int len) 
+void deep_copy(char **dest, char *src, int len)
 {
 	*dest = (char *)malloc(sizeof(char) * (len + 1));
 	strncpy(*dest, src, len);
@@ -361,13 +349,13 @@ int http_response(response_t *response, request_t *request)
 			(char *)malloc(sizeof(char)
 					* (1 + strlen(request->uri)));
 		strcpy(response->uri, request->uri);
-	} 
+	}
 	else {
 		return -1;
 	}
 
 	if (request->expect_location) {
-		response->location = 
+		response->location =
 			(char *)malloc(sizeof(char)
 					* (1 + strlen(request->expect_location)));
 		strcpy(response->location, request->expect_location);
@@ -395,7 +383,7 @@ int http_response(response_t *response, request_t *request)
 		}
 		else if (strcmp(iter->header, "Content-Length") == 0) {
 			sscanf(iter->value, "%d", &response->content_length);
-		} 
+		}
 		else if (strcmp(iter->header, "Date") == 0) {
 			deep_copy(&response->time_str, iter->value, strlen(iter->value));
 		}
@@ -421,7 +409,7 @@ void print_http_response(response_t *response)
 	printf("*uri: ");
 	if (response->uri) {
 		puts(response->uri);
-	} 
+	}
 	else {
 		puts("NULL");
 	}
@@ -455,7 +443,7 @@ int get_status_name(char *name, int status)
 void get_time_in_http_format(char *str, time_t _time)
 {
 	struct tm *t = gmtime(&_time);
-	sprintf(str, 
+	sprintf(str,
 		"%s, %d %s %d %d:%d:%d GMT",
 		week[t->tm_wday],
 		t->tm_mday,
@@ -468,7 +456,6 @@ void get_time_in_http_format(char *str, time_t _time)
 
 int http_response_400(char *str)
 {
-	int len;
 	char time_str[MAX_TIME_STR_LEN];
 
 	strcpy(str, HTTP_400);
@@ -480,7 +467,7 @@ int http_response_400(char *str)
 	return strlen(str);
 }
 
-int write_http_response(char *str, response_t *response) 
+int write_http_response(char *str, response_t *response)
 {
 	char line[MAX_BUF_SIZE];
 	char buf[MAX_BUF_SIZE];
@@ -531,7 +518,7 @@ int write_http_response(char *str, response_t *response)
 		sprintf(line, "%s: %s\r\n", iter->header, iter->value);
 		strcat(str, line);
 	}
-	
+
 	switch(response->status) {
 		case 200:
 			strcat(str, "\r\n");

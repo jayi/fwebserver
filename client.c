@@ -3,7 +3,7 @@
  *
  *       Filename:  client.c
  *
- *    Description:  
+ *    Description:
  *
  *        Version:  1.0
  *        Created:  2012年07月20日 10时27分43秒
@@ -11,7 +11,7 @@
  *       Compiler:  gcc
  *
  *         Author:  jayi (), hjy322@gmail.com
- *        Company:  
+ *        Company:
  *
  * =====================================================================================
  */
@@ -21,9 +21,10 @@
 #include <errno.h>
 #include <string.h>
 #include <netdb.h>
-#include <netinet/in.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
 
 #define MAX_BUF_SIZE 32768
 
@@ -93,12 +94,12 @@ int main(int argc, char **argv) {
 		printf("%s|%zd\n", request_str, strlen(request_str));
 		puts("****");
 
-		if (write(sockfd, request_str, strlen(request_str)) == -1) {
+		if (send(sockfd, request_str, strlen(request_str), 0) == -1) {
 			printf("Write Error:%s\n", strerror(errno));
 			break;
 		}
 
-		if ((nbytes = read(sockfd, response_str, MAX_BUF_SIZE)) == -1) {
+		if ((nbytes = recv(sockfd, response_str, MAX_BUF_SIZE, 0)) == -1) {
 			printf("Read Error:%s\n", strerror(errno));
 			break;
 		}

@@ -1,21 +1,25 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
 #include <errno.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <fcntl.h>
 #include <sys/epoll.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <arpa/inet.h>
 
 #include "http.h"
 #include "hash.h"
+
 #define MAX_EPOLLSIZE 100000
+#define ERROR_LOG perror
 
 /*
  * process event
@@ -74,34 +78,6 @@ void print_help(char *program_name)
 	printf("          default is %s, which means listening all request from any ip.\n", DEFAULT_IP);
 	printf("-p port   specify the listening port number.\n");
 	printf("          default is %d.\n", DEFAULT_PORT);
-}
-
-int is_valid_ip(char *ip)
-{
-	char *iter;
-	int cnt = 1;
-	int tmp;
-	char *c;
-
-	while ((iter = strchr(ip, '.')) != NULL) {
-		for (tmp = 0, c = ip; c != iter && isdigit(*c); ++c) {
-			tmp = tmp * 10 + *c - '0';
-		}
-		ip = iter + 1;
-		if (c != iter || tmp <0 || tmp >= 256) {
-			return 0;
-		}
-		++cnt;
-	}
-
-	for (tmp = 0, c = ip; isdigit(*c); ++c) {
-		tmp = tmp * 10 + *c - '0';
-	}
-	if (*c || tmp <0 || tmp >= 256) {
-		return 0;
-	}
-
-	return cnt == 4;
 }
 
 /*
@@ -167,7 +143,7 @@ int read_args(int argc, char **argv, char *ip, int *port)
 						ret = 0;
 						break;
 					}
-					if (!is_valid_ip(ip)) {
+					if (inet_addr(ip) < 0) {
 						printf("\nError: invalid ip\n");
 						ret = 0;
 						break;
@@ -272,24 +248,136 @@ void update_event(int fd) {
 // if a socket connection closed, delete it
 void del_event(int fd) {
 	int idx = hash_get(fd, event_table);
+	close(fd);
 	ei[idx].status = 0;
+}
+
+int init_socket(uint32_t ip, int port)
+{
+	struct sockaddr_in service_addr;
+	int listen_fd;
+	int tmp = 1;
+	int backlog = 5;
+
+	if ((listen_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+		ERROR_LOG("Cannot create socket\n");
+		return -1;
+	}
+	fcntl(listen_fd, F_SETFL, fcntl(listen_fd, F_GETFD, 0)|O_NONBLOCK);
+	bzero(&service_addr, sizeof(service_addr));
+	service_addr.sin_family		= AF_INET;
+	service_addr.sin_port		= htons(port);
+	service_addr.sin_addr.s_addr	= ip;
+
+	setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &tmp, sizeof(tmp));
+	if (bind(listen_fd, (struct sockaddr *)&service_addr,
+				sizeof(struct sockaddr)) == -1) {
+		ERROR_LOG("Cannot bind\n");
+		return -1;
+	}
+
+	if (listen(listen_fd, backlog) == -1) {
+		ERROR_LOG("Cannot listen\n");
+		return -1;
+	}
+
+	return listen_fd;
+}
+
+void epoll_loop(int listen_fd)
+{
+	struct epoll_event events[MAX_EPOLLSIZE];
+	struct epoll_event ev;
+	struct rlimit rt;
+	socklen_t sock_len;
+	int epfd;
+	int curfds;
+	int check_pos = 0;
+
+	rt.rlim_max = rt.rlim_cur = MAX_EPOLLSIZE;
+	if (setrlimit(RLIMIT_NOFILE, &rt) == -1) {
+		ERROR_LOG("Cannot set rlimit\n");
+		return;
+	}
+
+	epfd = epoll_create(MAX_EPOLLSIZE);
+	sock_len = sizeof(struct sockaddr_in);
+	ev.events = EPOLLIN | EPOLLET;
+	ev.data.fd = listen_fd;
+	if (epoll_ctl(epfd, EPOLL_CTL_ADD, listen_fd, &ev) < 0) {
+		ERROR_LOG("epoll set insertion error");
+		return;
+	}
+
+	curfds = 1;
+	check_pos = 0;
+	init_event_info();
+	init_hash_table(event_table);
+	while (1) {
+		time_t now = time(0);
+		int nfds;
+		int i;
+
+		for (i = 0; i < CHECK_TIMEOUT_NUM ; ++i, ++check_pos) {
+			int duration;
+
+			if (check_pos == MAX_EPOLLSIZE)
+				check_pos = 0;
+			if (ei[check_pos].status != 1)
+				continue;
+			duration = now - ei[check_pos].last_active;
+			if (duration >= TIMEOUT) {
+				del_event(ei[check_pos].fd);
+				epoll_ctl(epfd, EPOLL_CTL_DEL, ei[check_pos].fd,&ev);
+			}
+		}
+
+		nfds = epoll_wait(epfd, events, curfds, 1);
+		if (nfds == -1) {
+			ERROR_LOG("epoll_wait");
+			break;
+		}
+		for (i = 0; i < nfds; ++i) {
+			if (events[i].data.fd == listen_fd) {
+				int new_fd;
+				struct sockaddr_in client_addr;
+
+				new_fd = accept(listen_fd,
+						(struct sockaddr *)&client_addr,
+						&sock_len);
+				if (new_fd < 0)
+					continue;
+				else
+					add_event(new_fd);
+
+				fcntl(new_fd, F_SETFL,
+					fcntl(new_fd, F_GETFD, 0) | O_NONBLOCK);
+				ev.events = EPOLLIN | EPOLLET;
+				ev.data.fd = new_fd;
+				if (epoll_ctl(epfd, EPOLL_CTL_ADD, new_fd, &ev) < 0) {
+					ERROR_LOG("add socket to epoll unsucessful!!!");
+					return;
+				}
+				curfds++;
+			} else {
+				int ret = process(events[i].data.fd);
+				update_event(events[i].data.fd);
+				if (ret != 1 && errno != 11) {
+					del_event(events[i].data.fd);
+					epoll_ctl(epfd, EPOLL_CTL_DEL,
+							events[i].data.fd, &ev);
+					curfds--;
+				}
+			}
+		}
+	}
 }
 
 int main(int argc, char **argv)
 {
-	int listen_fd, new_fd, epfd, nfds, n, ret, curfds;
-	socklen_t sock_len;
-	struct sockaddr_in service_addr, client_addr;
-	unsigned int port;
-	int backlog = 5;
-	struct epoll_event ev;
-	struct epoll_event events[MAX_EPOLLSIZE];
-	struct rlimit rt;
+	int listen_fd;
+	int port;
 	char ip[MAX_IP_LENGTH];
-	time_t now;
-	int check_pos = 0;
-	int duration;
-	int i;
 
 	if (read_args(argc, argv, ip, &port) != 1) {
 		exit(1);
@@ -299,118 +387,11 @@ int main(int argc, char **argv)
 		exit(0);
 	}
 
-	rt.rlim_max = rt.rlim_cur = MAX_EPOLLSIZE;
-	if (setrlimit(RLIMIT_NOFILE, &rt) == -1)
-	{
-		perror("setrlimit");
+	if ((listen_fd = init_socket(inet_addr(ip), port)) < 0) {
 		exit(1);
 	}
 
-	// create socket
-	if ((listen_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
-	{
-		perror("socket");
-		exit(1);
-	}
-
-	fcntl(listen_fd, F_SETFL, fcntl(listen_fd, F_GETFD, 0)|O_NONBLOCK);
-
-	bzero(&service_addr, sizeof(service_addr));
-	service_addr.sin_family = AF_INET;
-	service_addr.sin_port = htons(port);
-	service_addr.sin_addr.s_addr = inet_addr(ip);
-
-	int tmp = 1;
-	setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &tmp, sizeof(tmp));
-
-	if (bind(listen_fd, (struct sockaddr *) &service_addr, sizeof(struct sockaddr)) == -1)
-	{
-		perror("bind");
-		exit(1);
-	}
-
-	if (listen(listen_fd, backlog) == -1)
-	{
-		perror("listen");
-		exit(1);
-	}
-
-	epfd = epoll_create(MAX_EPOLLSIZE);
-	sock_len = sizeof(struct sockaddr_in);
-	ev.events = EPOLLIN | EPOLLET;
-	ev.data.fd = listen_fd;
-	if (epoll_ctl(epfd, EPOLL_CTL_ADD, listen_fd, &ev) < 0)
-	{
-		fprintf(stderr, "epoll set insertion error: fd=%d\n", listen_fd);
-		return -1;
-	}
-
-	curfds = 1;
-	check_pos = 0;
-	init_event_info();
-	init_hash_table(event_table);
-	while (1)
-	{
-		now = time(0);
-		for (i = 0; i < CHECK_TIMEOUT_NUM ; ++i, ++check_pos) {
-			if (check_pos == MAX_EPOLLSIZE) {
-				check_pos = 0;
-			}
-			if (ei[check_pos].status != 1) {
-				continue;
-			}
-			duration = now - ei[check_pos].last_active;
-			if (duration >= TIMEOUT) {
-				del_event(ei[check_pos].fd);
-				close(ei[check_pos].fd);
-				epoll_ctl(epfd, EPOLL_CTL_DEL, ei[check_pos].fd,&ev);
-			}
-		}
-		nfds = epoll_wait(epfd, events, curfds, 1);
-		if (nfds == -1)
-		{
-			perror("epoll_wait");
-			break;
-		}
-		for (n = 0; n < nfds; ++n)
-		{
-			if (events[n].data.fd == listen_fd)
-			{
-				new_fd = accept(listen_fd, (struct sockaddr *) &client_addr,&sock_len);
-				if (new_fd < 0)
-				{
-					perror("accept");
-					continue;
-				}
-				else
-				{
-					add_event(new_fd);
-				}
-				fcntl(new_fd, F_SETFL, fcntl(new_fd, F_GETFD, 0)|O_NONBLOCK);
-				ev.events = EPOLLIN | EPOLLET;
-				ev.data.fd = new_fd;
-				if (epoll_ctl(epfd, EPOLL_CTL_ADD, new_fd, &ev) < 0)
-				{
-					printf("add socket '%d' to epoll unsucessful!!!%s\n",
-							new_fd, strerror(errno));
-					return -1;
-				}
-				curfds++;
-			}
-			else
-			{
-				ret = process(events[n].data.fd);
-				update_event(events[n].data.fd);
-				if (ret != 1 && errno != 11)
-				{
-					del_event(events[n].data.fd);
-					close(events[n].data.fd);
-					epoll_ctl(epfd, EPOLL_CTL_DEL, events[n].data.fd,&ev);
-					curfds--;
-				}
-			}
-		}
-	}
+	epoll_loop(listen_fd);
 	close(listen_fd);
 	return 0;
 }
