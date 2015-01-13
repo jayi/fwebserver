@@ -3,7 +3,7 @@
  *
  *       Filename:  hash.h
  *
- *    Description:  
+ *    Description:
  *
  *        Version:  1.0
  *        Created:  08/01/2012 12:58:37 PM
@@ -11,7 +11,7 @@
  *       Compiler:  gcc
  *
  *         Author:  jayi (), hjy322@gmail.com
- *        Company:  
+ *        Company:
  *
  * =====================================================================================
  */
@@ -24,7 +24,7 @@ typedef unsigned long elem_t;
 struct hash_node {
 	elem_t key;
 	int value;
-}; 
+};
 
 elem_t elf_hash(char *key);
 

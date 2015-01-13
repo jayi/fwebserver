@@ -41,7 +41,7 @@ int process(int new_fd)
 	bzero(buf, MAX_BUF_SIZE);
 
 	do {
-		if ((nbytes = read(new_fd, buf, MAX_BUF_SIZE)) == -1) {
+		if ((nbytes = recv(new_fd, buf, MAX_BUF_SIZE, 0)) == -1) {
 			ret = -2;
 			break;
 		}
@@ -64,145 +64,20 @@ int process(int new_fd)
 		nbytes = http_response_400(buf);
 	}
 
-	if (ret != -2 && write(new_fd, buf, nbytes) == -1)
+	if (ret != -2 && send(new_fd, buf, nbytes, 0) == -1)
 		ret = -2;
 
 	return ret;
 }
 
 /* print help information, if get wrong arguments */
-void print_help(char *program_name)
+void usage(char *program_name)
 {
 	printf("Usage:    %s [-h ip] [-p port]\n", program_name);
 	printf("-h ip     specify the listening ip.\n");
 	printf("          default is %s, which means listening all request from any ip.\n", DEFAULT_IP);
 	printf("-p port   specify the listening port number.\n");
 	printf("          default is %d.\n", DEFAULT_PORT);
-}
-
-/*
- * read arguments
- * arguments:
- * argc: number of arguments
- * argv: string array of arguments
- * ip: listening ip
- * port: listening port number
- * return:
- * 	1 means sucessful
- * 	other means have error
- */
-int read_args(int argc, char **argv, char *ip, int *port)
-{
-	int i = 1;
-	int j;
-	int ret = 1;
-	int len;
-	int flag = 0;
-	char *c;
-
-	// strcpy(DEFAULT_IP, ip);
-	strcpy(ip, DEFAULT_IP);
-	*port = DEFAULT_PORT;
-
-	for (; i < argc; ) {
-		if (argv[i][0] == '-') {
-			if (argv[i][1] == 'h') {
-				if (flag & 1) {
-					printf("\nError: argument \"-h\" repeated\n");
-					ret = 0;
-					break;
-				}
-				flag |= 1;
-
-				if (argv[i][2] != '\0') {
-					printf("\nError: invalid arguments\n");
-					ret = 0;
-					break;
-				}
-				else {
-					++i;
-					if (i == argc) {
-						printf("\nError: no value for argument \"-h\"\n");
-						ret = 0;
-						break;
-					}
-
-					len = 0;
-					c = ip;
-					for (j = 0; argv[i][j]; ++j) {
-						++len;
-						if (len > MAX_IP_LENGTH) {
-							break;
-						}
-						*c = argv[i][j];
-						++c;
-					}
-					*c = '\0';
-
-					if (argv[i][j]) {
-						ret = 0;
-						break;
-					}
-					if (inet_addr(ip) < 0) {
-						printf("\nError: invalid ip\n");
-						ret = 0;
-						break;
-					}
-				}
-			}
-			else if (argv[i][1] == 'p') {
-				if (flag & 2) {
-					printf("\nError: argument \"-p\" repeated\n");
-					ret = 0;
-					break;
-				}
-				flag |= 2;
-
-				if (argv[i][2] != '\0') {
-					printf("\nError: invalid arguments\n");
-					ret = 0;
-					break;
-				}
-				else {
-					++i;
-					if (i == argc) {
-						printf("\nError: no value for argument \"-p\"\n");
-						ret = 0;
-						break;
-					}
-
-					*port = 0;
-					for (j = 0; argv[i][j]; ++j) {
-						if (!isdigit(argv[i][j])) {
-							break;
-						}
-						*port = *port * 10 + argv[i][j] - '0';
-					}
-					if (argv[i][j]) {
-						printf("\nError: invalid port\n");
-						ret = 0;
-						break;
-					}
-				}
-			}
-			else {
-				printf("\nError: invalid arguments\n");
-				ret = 0;
-				break;
-			}
-		}
-		else {
-			printf("\nError: invalid arguments\n");
-			ret = 0;
-			break;
-		}
-		++i;
-	}
-	if (ret == 0) {
-		print_help(argv[0]);
-	}
-
-	return ret;
 }
 
 struct event_info {
@@ -347,8 +222,6 @@ void epoll_loop(int listen_fd)
 						&sock_len);
 				if (new_fd < 0)
 					continue;
-				else
-					add_event(new_fd);
 
 				fcntl(new_fd, F_SETFL,
 					fcntl(new_fd, F_GETFD, 0) | O_NONBLOCK);
@@ -358,6 +231,7 @@ void epoll_loop(int listen_fd)
 					ERROR_LOG("add socket to epoll unsucessful!!!");
 					return;
 				}
+				add_event(new_fd);
 				curfds++;
 			} else {
 				int ret = process(events[i].data.fd);
@@ -377,17 +251,32 @@ int main(int argc, char **argv)
 {
 	int listen_fd;
 	int port;
-	char ip[MAX_IP_LENGTH];
+	uint32_t ip = 0;
+	int opt;
 
-	if (read_args(argc, argv, ip, &port) != 1) {
-		exit(1);
+	while ((opt = getopt(argc, argv, "h:p:")) != -1) {
+		switch(opt) {
+			case 'h':
+				ip = inet_addr(optarg);
+				if (ip == -1) {
+					usage(argv[0]);
+					return 0;
+				}
+				break;
+			case 'p':
+				port = atoi(optarg);
+				break;
+			default:
+				usage(argv[0]);
+				return 0;
+		}
 	}
 
 	if (fork() != 0) {
 		exit(0);
 	}
 
-	if ((listen_fd = init_socket(inet_addr(ip), port)) < 0) {
+	if ((listen_fd = init_socket(ip, port)) < 0) {
 		exit(1);
 	}
 
