@@ -61,11 +61,9 @@ int read_head(request_t *request, char *line)
 	char *part;
 
 	if (line[strlen(line) - 1] != '\r') {
-//		printf("Error: head format error line[-1] != \\r\n");
 		return -1;
 	}
 
-	// read http method
 	if ((part = strsep(&iter, " ")) == NULL) {
 		return -1;
 	}
@@ -76,7 +74,6 @@ int read_head(request_t *request, char *line)
 		request->http_method = HTTP_METHOD_HEAD;
 	}
 	else {
-//		printf("Error: have no http method\n");
 		return -1;
 	}
 
@@ -87,7 +84,6 @@ int read_head(request_t *request, char *line)
 	request->uri = (char *)malloc((strlen(part) + 1) * sizeof(char));
 	strcpy(request->uri, part);
 	if (!is_valid_uri(request->uri)) {
-//		printf("\nError: invalid uri\n");
 		return -1;
 	}
 
@@ -246,7 +242,6 @@ int read_http_request(request_t *request, char *str, int len)
 					"Expect-Length",
 					strlen("Expect-Length")) == 0) {
 			if (request->flag & EXPECT_LENGTH_FLAG) {
-//				printf("Error: more than one Expect-Length\n");
 				return -1;
 			}
 			request->flag |= EXPECT_LENGTH_FLAG;
@@ -264,7 +259,6 @@ int read_http_request(request_t *request, char *str, int len)
 				"Connection",
 				strlen("Connection")) == 0) {
 			if (request->flag & CONNECTION_FLAG) {
-//				printf("Error: more than one Connection\n");
 				return -1;
 			}
 			request->flag |= CONNECTION_FLAG;
@@ -287,25 +281,19 @@ int read_http_request(request_t *request, char *str, int len)
 
 		}
 		else {
-//			puts("other header");
 			node = (header_t)malloc(sizeof(struct header_node));
 			node->header = (char *)malloc(sizeof(char) * (pch - line + 1));
 			strncpy(node->header, line, pch - line);
 			node->header[pch - line + 1] = '\0';
-//			printf("header	%s ", node->header);
-//			printf("%zd\n", strlen(node->header));
 			node->value = (char *)malloc(sizeof(char)
 					* (strlen(line) - (pch - line) - 1));
 			strncpy(node->value, pch + 2, strlen(line) - (pch - line) - 3);
 			node->value[strlen(line) - (pch - line) - 1] = '\0';
-//			printf("value	%s ", node->value);
-//			printf("%zd\n", strlen(node->value));
 			node->next = request->other_header;
 			request->other_header = node;
 		}
 	}
 	if (!is_valid_status(request->expect_status)) {
-//		printf("Error: invalid Expect-Status\n");
 		return -1;
 	}
 	return 1;
@@ -364,7 +352,6 @@ int http_response(response_t *response, request_t *request)
 	header_t iter;
 	header_t node = NULL;
 	for (iter = request->expect_header; iter; iter = iter->next) {
-//		printf("ITER %s %zd %s %zd\n", iter->header, strlen(iter->header), iter->value, strlen(iter->value));
 		if (strcmp(iter->header, "Connection") == 0) {
 			if (strcmp(iter->value, "keep-alive") == 0) {
 				response->keep_alive = 1;
@@ -373,10 +360,8 @@ int http_response(response_t *response, request_t *request)
 				response->keep_alive = 0;
 			}
 			else {
-//				printf("%s %zd %d\n", iter->value, strlen(iter->value), (int)(iter->value[strlen(iter->value) - 1]));
 				return -1;
 			}
-//			printf("keep_alive %d\n", response->keep_alive);
 		}
 		else if (strcmp(iter->header, "Server") == 0) {
 			deep_copy(&response->server, iter->value, strlen(iter->value));
@@ -490,7 +475,6 @@ int write_http_response(char *str, response_t *response)
 	get_status_name(buf, response->status);
 	strcat(line, buf);
 	strcat(line, "\r\n");
-//	puts(line);
 	strcat(str, line);
 	sprintf(line, "Server: %s\r\n", response->server);
 	strcat(str, line);

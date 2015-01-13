@@ -225,9 +225,8 @@ void epoll_loop(int listen_fd)
 		ERROR_LOG("epoll set insertion error");
 		return;
 	}
-
 	curfds = 1;
-	check_pos = 0;
+
 	init_event_info();
 	init_hash_table(event_table);
 	while (1) {
