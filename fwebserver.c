@@ -159,6 +159,28 @@ int init_socket(uint32_t ip, int port)
 	return listen_fd;
 }
 
+int check_pos = 0;
+void del_timeout_event(int epfd)
+{
+	struct epoll_event ev;
+	time_t now = time(0);
+	int i;
+
+	for (i = 0; i < CHECK_TIMEOUT_NUM ; ++i, ++check_pos) {
+		int duration;
+
+		if (check_pos == MAX_EPOLLSIZE)
+			check_pos = 0;
+		if (ei[check_pos].status != 1)
+			continue;
+		duration = now - ei[check_pos].last_active;
+		if (duration >= TIMEOUT) {
+			del_event(ei[check_pos].fd);
+			epoll_ctl(epfd, EPOLL_CTL_DEL, ei[check_pos].fd, &ev);
+		}
+	}
+}
+
 void epoll_loop(int listen_fd)
 {
 	struct epoll_event events[MAX_EPOLLSIZE];
@@ -167,7 +189,6 @@ void epoll_loop(int listen_fd)
 	socklen_t sock_len;
 	int epfd;
 	int curfds;
-	int check_pos = 0;
 
 	rt.rlim_max = rt.rlim_cur = MAX_EPOLLSIZE;
 	if (setrlimit(RLIMIT_NOFILE, &rt) == -1) {
@@ -189,23 +210,10 @@ void epoll_loop(int listen_fd)
 	init_event_info();
 	init_hash_table(event_table);
 	while (1) {
-		time_t now = time(0);
 		int nfds;
 		int i;
 
-		for (i = 0; i < CHECK_TIMEOUT_NUM ; ++i, ++check_pos) {
-			int duration;
-
-			if (check_pos == MAX_EPOLLSIZE)
-				check_pos = 0;
-			if (ei[check_pos].status != 1)
-				continue;
-			duration = now - ei[check_pos].last_active;
-			if (duration >= TIMEOUT) {
-				del_event(ei[check_pos].fd);
-				epoll_ctl(epfd, EPOLL_CTL_DEL, ei[check_pos].fd,&ev);
-			}
-		}
+		del_timeout_event(epfd);
 
 		nfds = epoll_wait(epfd, events, curfds, 1);
 		if (nfds == -1) {
