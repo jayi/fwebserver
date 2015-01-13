@@ -121,10 +121,11 @@ void update_event(int fd) {
 }
 
 // if a socket connection closed, delete it
-void del_event(int fd) {
+void del_event(int fd, int epfd) {
 	int idx = hash_get(fd, event_table);
 	close(fd);
 	ei[idx].status = 0;
+	epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
 }
 
 int init_socket(uint32_t ip, int port)
@@ -162,7 +163,6 @@ int init_socket(uint32_t ip, int port)
 int check_pos = 0;
 void del_timeout_event(int epfd)
 {
-	struct epoll_event ev;
 	time_t now = time(0);
 	int i;
 
@@ -174,11 +174,32 @@ void del_timeout_event(int epfd)
 		if (ei[check_pos].status != 1)
 			continue;
 		duration = now - ei[check_pos].last_active;
-		if (duration >= TIMEOUT) {
-			del_event(ei[check_pos].fd);
-			epoll_ctl(epfd, EPOLL_CTL_DEL, ei[check_pos].fd, &ev);
-		}
+		if (duration >= TIMEOUT)
+			del_event(ei[check_pos].fd, epfd);
 	}
+}
+
+int accept_conn(int epfd, int listen_fd)
+{
+	struct sockaddr_in client_addr;
+	struct epoll_event ev;
+	socklen_t sock_len;
+	int new_fd;
+
+	new_fd = accept(listen_fd, (struct sockaddr *)&client_addr, &sock_len);
+	if (new_fd < 0)
+		return new_fd;
+
+	fcntl(new_fd, F_SETFL, fcntl(new_fd, F_GETFD, 0) | O_NONBLOCK);
+	ev.events = EPOLLIN | EPOLLET;
+	ev.data.fd = new_fd;
+	if (epoll_ctl(epfd, EPOLL_CTL_ADD, new_fd, &ev) < 0) {
+		ERROR_LOG("add socket to epoll unsucessful!!!");
+		return -1;
+	}
+	add_event(new_fd);
+
+	return new_fd;
 }
 
 void epoll_loop(int listen_fd)
@@ -222,32 +243,14 @@ void epoll_loop(int listen_fd)
 		}
 		for (i = 0; i < nfds; ++i) {
 			if (events[i].data.fd == listen_fd) {
-				int new_fd;
-				struct sockaddr_in client_addr;
-
-				new_fd = accept(listen_fd,
-						(struct sockaddr *)&client_addr,
-						&sock_len);
-				if (new_fd < 0)
-					continue;
-
-				fcntl(new_fd, F_SETFL,
-					fcntl(new_fd, F_GETFD, 0) | O_NONBLOCK);
-				ev.events = EPOLLIN | EPOLLET;
-				ev.data.fd = new_fd;
-				if (epoll_ctl(epfd, EPOLL_CTL_ADD, new_fd, &ev) < 0) {
-					ERROR_LOG("add socket to epoll unsucessful!!!");
-					return;
+				if (accept_conn(epfd, listen_fd) > 0) {
+					curfds++;
 				}
-				add_event(new_fd);
-				curfds++;
 			} else {
 				int ret = process(events[i].data.fd);
 				update_event(events[i].data.fd);
 				if (ret != 1 && errno != 11) {
-					del_event(events[i].data.fd);
-					epoll_ctl(epfd, EPOLL_CTL_DEL,
-							events[i].data.fd, &ev);
+					del_event(events[i].data.fd, epfd);
 					curfds--;
 				}
 			}
