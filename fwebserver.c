@@ -16,7 +16,6 @@
 #include <arpa/inet.h>
 
 #include "http.h"
-#include "hash.h"
 
 #define MAX_EPOLLSIZE 100000
 #define ERROR_LOG perror
@@ -80,52 +79,61 @@ void usage(char *program_name)
 	printf("          default is %d.\n", DEFAULT_PORT);
 }
 
-struct event_info {
-	time_t last_active;	/* last active time */
-	int status;	/* event_info status. 1 means this event_info is effective. 0 means empty. */
-	int fd;		/* socket file description */
-} ei[MAX_EPOLLSIZE];	/* more event information */
-int eip;	/* event_info array position, use it to find an empty event_info. */
+struct session {
+	time_t last_active;		/* last active time */
+	int status;			/* event_info status. 1 means this
+					 * event_info is effective. 0 means empty.
+					 */
+	int fd;				/* file description */
+	struct session *next;		/* for recycle list, active_list */
+	struct session *prev;
+};
 
-struct hash_node event_table[HASH_SIZE];
-#define CHECK_TIMEOUT_NUM 10000	// every second check some events if it is timeout or not.
-#define TIMEOUT 60	// after 60 seconds inactive, close connection
+struct session *recycle_list = NULL;
+struct session active_list = {
+	.next = &active_list,
+	.prev = &active_list,
+};
 
-void init_event_info()
+void list_add(struct session *head, struct session *new)
 {
-	int i;
+	new->prev = head;
+	new->next = head->next;
+	head->next->prev = new;
+	head->next = new;
+}
 
-	eip = 0;
-	for (i = 0; i < MAX_EPOLLSIZE; ++i) {
-		ei[i].last_active = 0;
-		ei[i].status = 0;
-		ei[i].fd = 0;
+void list_del(struct session *entry)
+{
+	entry->next->prev = entry->prev;
+	entry->prev->next = entry->next;
+	entry->prev = entry->next = NULL;
+}
+
+struct session *new_session(int fd)
+{
+	struct session *ret;
+
+	if (recycle_list == NULL) {
+		ret = malloc(sizeof(struct session));
+	} else {
+		ret = recycle_list;
+		recycle_list = recycle_list->next;
 	}
+
+	ret->last_active = time(0);
+	ret->fd = fd;
+	list_add(&active_list, ret);
+
+	return ret;
 }
 
-// find an empty event_info and save a new socket fd
-void add_event(int fd)
+void end_session(struct session *session)
 {
-	for (; ei[eip].status; ++eip) {}
-	ei[eip].fd = fd;
-	ei[eip].status = 1;
-	ei[eip].last_active = time(0);
-	hash_insert(fd, eip, event_table);
-}
-
-// if socked is active, update its event_info
-void update_event(int fd) {
-	int idx = hash_get(fd, event_table);
-	ei[idx].status = 1;
-	ei[idx].last_active = time(0);
-}
-
-// if a socket connection closed, delete it
-void del_event(int fd, int epfd) {
-	int idx = hash_get(fd, event_table);
-	close(fd);
-	ei[idx].status = 0;
-	epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
+	list_del(session);
+	session->next = recycle_list;
+	recycle_list = session;
+	close(session->fd);
 }
 
 int init_socket(uint32_t ip, int port)
@@ -160,22 +168,24 @@ int init_socket(uint32_t ip, int port)
 	return listen_fd;
 }
 
-int check_pos = 0;
-void del_timeout_event(int epfd)
+/* every second check some events if it is timeout or not. */
+#define CHECK_TIMEOUT_NUM 10000
+/* inactive more than 60 seconds, close connection. */
+#define TIMEOUT 60
+void del_timeout_sessions(int epfd)
 {
 	time_t now = time(0);
-	int i;
+	struct session *iter;
+	int cnt = 0;
 
-	for (i = 0; i < CHECK_TIMEOUT_NUM ; ++i, ++check_pos) {
-		int duration;
-
-		if (check_pos == MAX_EPOLLSIZE)
-			check_pos = 0;
-		if (ei[check_pos].status != 1)
-			continue;
-		duration = now - ei[check_pos].last_active;
-		if (duration >= TIMEOUT)
-			del_event(ei[check_pos].fd, epfd);
+	for (iter = active_list.next;
+			iter != &active_list && (++cnt) < CHECK_TIMEOUT_NUM;
+			iter = iter->next) {
+		int duration = now - iter->last_active;
+		if (duration >= TIMEOUT) {
+			end_session(iter);
+			epoll_ctl(epfd, EPOLL_CTL_DEL, iter->fd, NULL);
+		}
 	}
 }
 
@@ -183,6 +193,7 @@ int accept_conn(int epfd, int listen_fd)
 {
 	struct sockaddr_in client_addr;
 	struct epoll_event ev;
+	struct session *session;
 	socklen_t sock_len;
 	int new_fd;
 
@@ -192,12 +203,12 @@ int accept_conn(int epfd, int listen_fd)
 
 	fcntl(new_fd, F_SETFL, fcntl(new_fd, F_GETFD, 0) | O_NONBLOCK);
 	ev.events = EPOLLIN | EPOLLET;
-	ev.data.fd = new_fd;
+	session = new_session(new_fd);
+	ev.data.ptr = session;
 	if (epoll_ctl(epfd, EPOLL_CTL_ADD, new_fd, &ev) < 0) {
 		ERROR_LOG("add socket to epoll unsucessful!!!");
 		return -1;
 	}
-	add_event(new_fd);
 
 	return new_fd;
 }
@@ -227,13 +238,11 @@ void epoll_loop(int listen_fd)
 	}
 	curfds = 1;
 
-	init_event_info();
-	init_hash_table(event_table);
 	while (1) {
 		int nfds;
 		int i;
 
-		del_timeout_event(epfd);
+		del_timeout_sessions(epfd);
 
 		nfds = epoll_wait(epfd, events, curfds, 1);
 		if (nfds == -1) {
@@ -246,10 +255,12 @@ void epoll_loop(int listen_fd)
 					curfds++;
 				}
 			} else {
-				int ret = process(events[i].data.fd);
-				update_event(events[i].data.fd);
+				struct session *session = events[i].data.ptr;
+				int ret = process(session->fd);
+				session->last_active = time(0);
 				if (ret != 1 && errno != 11) {
-					del_event(events[i].data.fd, epfd);
+					end_session(session);
+					epoll_ctl(epfd, EPOLL_CTL_DEL, session->fd, NULL);
 					curfds--;
 				}
 			}
