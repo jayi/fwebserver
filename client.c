@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
 	int port, nbytes;
 	FILE *fp, *output_fp;
 
-	if ((host = gethostbyname("192.168.56.101")) == NULL) {
+	if ((host = gethostbyname("192.168.18.11")) == NULL) {
 		fprintf(stderr, "Gethostname error\n");
 		exit(1);
 	}

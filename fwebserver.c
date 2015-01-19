@@ -178,9 +178,12 @@ void del_timeout_sessions(int epfd)
 	struct session *iter;
 	int cnt = 0;
 
-	for (iter = active_list.next;
+	/* because active_list is sorted by timestamp,
+	 * we delete timeout sessions from tail to head
+	 */
+	for (iter = active_list.prev;
 			iter != &active_list && (++cnt) < CHECK_TIMEOUT_NUM;
-			iter = iter->next) {
+			iter = iter->prev) {
 		int duration = now - iter->last_active;
 		if (duration >= TIMEOUT) {
 			end_session(iter);
@@ -231,7 +234,7 @@ void epoll_loop(int listen_fd)
 	epfd = epoll_create(MAX_EPOLLSIZE);
 	sock_len = sizeof(struct sockaddr_in);
 	ev.events = EPOLLIN | EPOLLET;
-	ev.data.fd = listen_fd;
+	ev.data.ptr = NULL;
 	if (epoll_ctl(epfd, EPOLL_CTL_ADD, listen_fd, &ev) < 0) {
 		ERROR_LOG("epoll set insertion error");
 		return;
@@ -250,7 +253,7 @@ void epoll_loop(int listen_fd)
 			break;
 		}
 		for (i = 0; i < nfds; ++i) {
-			if (events[i].data.fd == listen_fd) {
+			if (events[i].data.ptr == NULL) {
 				if (accept_conn(epfd, listen_fd) > 0) {
 					curfds++;
 				}
@@ -258,6 +261,11 @@ void epoll_loop(int listen_fd)
 				struct session *session = events[i].data.ptr;
 				int ret = process(session->fd);
 				session->last_active = time(0);
+				/* move session to head of list,
+				 * so the list is sorted by timestamp.
+				 */
+				list_del(session);
+				list_add(&active_list, session);
 				if (ret != 1 && errno != 11) {
 					end_session(session);
 					epoll_ctl(epfd, EPOLL_CTL_DEL, session->fd, NULL);

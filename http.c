@@ -186,8 +186,7 @@ int read_http_request(request_t *request, char *str, int len)
 				return -1;
 			}
 		}
-		else if (strncmp(line,
-					"Expect-Location",
+		else if (strncmp(line, "Expect-Location",
 					strlen("Expect-Location")) == 0) {
 			if (request->flag & EXPECT_LOCATION_FLAG) {
 				return -1;
