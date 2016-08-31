@@ -532,3 +532,4 @@ int write_http_response(char *str, response_t *response)
 
 	return strlen(str);
 }
+

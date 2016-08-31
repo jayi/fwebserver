@@ -21,7 +21,8 @@
 #define ERROR_LOG perror
 
 /*
- * process event
+ * process event, read http request and response
+ *
  * argument: new_fd is client socket file description
  * return:
  * -1 means format error
@@ -40,15 +41,18 @@ int process(int new_fd)
 	bzero(buf, MAX_BUF_SIZE);
 
 	do {
+                // read data from socket
 		if ((nbytes = recv(new_fd, buf, MAX_BUF_SIZE, 0)) == -1) {
 			ret = -2;
 			break;
 		}
 
+                // parse data to http request
 		if (read_http_request(&request, buf, nbytes) == -1) {
 			ret = -1;
 			break;
 		}
+                // get response from request
 		http_response(&response, &request);
 		if (response.keep_alive == 0) {
 			ret = 0;
@@ -63,13 +67,16 @@ int process(int new_fd)
 		nbytes = http_response_400(buf);
 	}
 
-	if (ret != -2 && send(new_fd, buf, nbytes, 0) == -1)
+	if (ret != -2 && send(new_fd, buf, nbytes, 0) == -1) {
 		ret = -2;
+        }
 
 	return ret;
 }
 
-/* print help information, if get wrong arguments */
+/*
+ * print help information
+ */
 void usage(char *program_name)
 {
 	printf("Usage:    %s [-h ip] [-p port]\n", program_name);
@@ -178,8 +185,8 @@ void del_timeout_sessions(int epfd)
 	struct session *iter;
 	int cnt = 0;
 
-	/* because active_list is sorted by timestamp,
-	 * we delete timeout sessions from tail to head
+	/* Because active_list is sorted by timestamp,
+	 * we can delete timeout sessions from tail to head
 	 */
 	for (iter = active_list.prev;
 			iter != &active_list && (++cnt) < CHECK_TIMEOUT_NUM;
@@ -225,6 +232,7 @@ void epoll_loop(int listen_fd)
 	int epfd;
 	int curfds;
 
+	/* set max open fd limit */
 	rt.rlim_max = rt.rlim_cur = MAX_EPOLLSIZE;
 	if (setrlimit(RLIMIT_NOFILE, &rt) == -1) {
 		ERROR_LOG("Cannot set rlimit\n");
